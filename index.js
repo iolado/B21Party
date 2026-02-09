@@ -1,6 +1,6 @@
 // === Constants ===
 const BASE = "https://fsa-crud-2aa9294fe819.herokuapp.com/api";
-const COHORT = ""; // Make sure to change this!
+const COHORT = "2511-CPU-RM-WEB-PT"; // Make sure to change this!
 const API = BASE + COHORT;
 
 // === State ===
@@ -15,6 +15,13 @@ async function getParties() {
     const response = await fetch(API + "/events");
     const result = await response.json();
     parties = result.data;
+
+    // keep selectedParty consistent if it still exists
+    if (selectedParty) {
+      const stillThere = parties.find((p) => p.id === selectedParty.id);
+      if (!stillThere) selectedParty = undefined;
+    }
+
     render();
   } catch (e) {
     console.error(e);
@@ -57,6 +64,47 @@ async function getGuests() {
   }
 }
 
+// === NEW: API mutations ===
+
+/** Creates a new party via POST, then refreshes parties */
+async function createParty(party) {
+  try {
+    const response = await fetch(API + "/events", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(party),
+    });
+    const result = await response.json();
+
+    if (!response.ok) throw new Error(result?.error || "Failed to create party.");
+
+    // Refresh parties list; optionally select the new party if API returns it
+    await getParties();
+    if (result?.data?.id) {
+      await getParty(result.data.id);
+    }
+  } catch (e) {
+    console.error(e);
+  }
+}
+
+/** Deletes a party via DELETE, then refreshes parties */
+async function deleteParty(id) {
+  try {
+    const response = await fetch(API + "/events/" + id, { method: "DELETE" });
+    const result = await response.json();
+
+    if (!response.ok) throw new Error(result?.error || "Failed to delete party.");
+
+    // clear selection if we deleted the selected party
+    if (selectedParty?.id === id) selectedParty = undefined;
+
+    await getParties();
+  } catch (e) {
+    console.error(e);
+  }
+}
+
 // === Components ===
 
 /** Party name that shows more details about the party when clicked */
@@ -85,6 +133,56 @@ function PartyList() {
   return $ul;
 }
 
+/** NEW: Form to add a new party */
+function PartyForm() {
+  const $section = document.createElement("section");
+  $section.innerHTML = `
+    <h2>Add a new party</h2>
+    <form id="new-party-form">
+      <label>
+        Name
+        <input name="name" type="text" required />
+      </label>
+
+      <label>
+        Description
+        <input name="description" type="text" required />
+      </label>
+
+      <label>
+        Date
+        <input name="date" type="date" required />
+      </label>
+
+      <label>
+        Location
+        <input name="location" type="text" required />
+      </label>
+
+      <button type="submit">Add party</button>
+    </form>
+  `;
+
+  const $form = $section.querySelector("#new-party-form");
+  $form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+
+    const formData = new FormData($form);
+    const name = String(formData.get("name") || "").trim();
+    const description = String(formData.get("description") || "").trim();
+    const dateFromForm = String(formData.get("date") || ""); // "YYYY-MM-DD"
+    const location = String(formData.get("location") || "").trim();
+
+    // Convert to ISO string (API requires this)
+    const isoDate = new Date(dateFromForm).toISOString();
+
+    await createParty({ name, description, date: isoDate, location });
+    $form.reset();
+  });
+
+  return $section;
+}
+
 /** Detailed information about the selected party */
 function SelectedParty() {
   if (!selectedParty) {
@@ -101,8 +199,16 @@ function SelectedParty() {
     </time>
     <address>${selectedParty.location}</address>
     <p>${selectedParty.description}</p>
+
+    <button id="delete-party">Delete party</button>
+
     <GuestList></GuestList>
   `;
+
+  $party.querySelector("#delete-party").addEventListener("click", async () => {
+    await deleteParty(selectedParty.id);
+  });
+
   $party.querySelector("GuestList").replaceWith(GuestList());
 
   return $party;
@@ -111,6 +217,9 @@ function SelectedParty() {
 /** List of guests attending the selected party */
 function GuestList() {
   const $ul = document.createElement("ul");
+
+  if (!selectedParty) return $ul;
+
   const guestsAtParty = guests.filter((guest) =>
     rsvps.find(
       (rsvp) => rsvp.guestId === guest.id && rsvp.eventId === selectedParty.id
@@ -138,6 +247,7 @@ function render() {
         <h2>Upcoming Parties</h2>
         <PartyList></PartyList>
       </section>
+
       <section id="selected">
         <h2>Party Details</h2>
         <SelectedParty></SelectedParty>
@@ -147,6 +257,10 @@ function render() {
 
   $app.querySelector("PartyList").replaceWith(PartyList());
   $app.querySelector("SelectedParty").replaceWith(SelectedParty());
+
+  // NEW: add the form under the party list section
+  const leftSection = $app.querySelector("main section");
+  leftSection.appendChild(PartyForm());
 }
 
 async function init() {
